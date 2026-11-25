@@ -1,339 +1,333 @@
 
 /************************************************************
  * NOVA GLOBAL ENTERPRISES
- * B2B WEBSITE - COMPLETE APP.JS
- *
- * Backend: Google Apps Script
- * Database: Google Sheets
+ * PUBLIC B2B WEBSITE - APP.JS
+ * Google Sheets + Google Apps Script API
  ************************************************************/
 
-const API_ENDPOINT =
-  "https://script.google.com/macros/s/AKfycbwnBd6CdsFV1UIMJYaEkeiTypivKOJzEdpD6jCj51tumDQ083fIi5GX3sypz26B0ov4bA/exec";
+const API_ENDPOINT = "https://script.google.com/macros/s/AKfycbwnBd6CdsFV1UIMJYaEkeiTypivKOJzEdpD6jCj51tumDQ083fIi5GX3sypz26B0ov4bA/exec";
 
-/* =========================================================
-   GLOBAL STATE
-========================================================= */
+let products = [];
+let categories = [];
+let cart = JSON.parse(localStorage.getItem("novaEnquiryCart") || "[]");
 
 const $ = id => document.getElementById(id);
 
-const state = {
-  products: [],
-  categories: [],
-  cart: JSON.parse(localStorage.getItem("novaEnquiryCart") || "[]"),
-  search: "",
-  category: ""
-};
-
 /* =========================================================
-   INITIALIZE
+   INITIALIZE WEBSITE
 ========================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
 
-  $("year").textContent = new Date().getFullYear();
+    $("year").textContent = new Date().getFullYear();
 
-  // Search
-  $("searchInput").addEventListener("input", event => {
-    state.search = event.target.value.trim().toLowerCase();
-    renderProducts();
-  });
+    $("menuToggle")?.addEventListener("click", toggleMenu);
 
-  // Category filter
-  $("categoryFilter").addEventListener("change", event => {
-    state.category = event.target.value;
-    renderProducts();
-  });
+    $("openCart")?.addEventListener("click", openCart);
+    $("heroEnquiry")?.addEventListener("click", openCart);
+    $("closeCart")?.addEventListener("click", closeCart);
+    $("drawerBackdrop")?.addEventListener("click", closeCart);
 
-  // Cart controls
-  $("openCart").addEventListener("click", openCart);
-  $("heroEnquiry").addEventListener("click", openCart);
-  $("closeCart").addEventListener("click", closeCart);
-  $("drawerBackdrop").addEventListener("click", closeCart);
+    $("searchInput")?.addEventListener("input", renderProducts);
 
-  // Product modal
-  $("closeModal").addEventListener("click", closeProductModal);
+    $("categoryFilter")?.addEventListener("change", renderProducts);
 
-  $("productModal").addEventListener("click", event => {
-    if (event.target === $("productModal")) {
-      closeProductModal();
-    }
-  });
+    $("closeModal")?.addEventListener("click", closeProductModal);
 
-  // Enquiry form
-  $("enquiryForm").addEventListener("submit", submitEnquiry);
-
-  // Mobile navigation
-  $("menuToggle").addEventListener("click", () => {
-    $("mainNav").classList.toggle("open");
-  });
-
-  document.querySelectorAll("#mainNav a").forEach(link => {
-    link.addEventListener("click", () => {
-      $("mainNav").classList.remove("open");
+    $("productModal")?.addEventListener("click", e => {
+        if (e.target === $("productModal")) {
+            closeProductModal();
+        }
     });
-  });
 
-  // Initial UI
-  updateCartCount();
-  renderCart();
+    $("enquiryForm")?.addEventListener("submit", submitEnquiry);
 
-  // Load products
-  loadCatalogue();
+    document.querySelectorAll("#mainNav a").forEach(link => {
+        link.addEventListener("click", () => {
+            $("mainNav")?.classList.remove("open");
+        });
+    });
 
+    renderCart();
+
+    loadProducts();
 });
 
 
 /* =========================================================
-   GOOGLE APPS SCRIPT API
+   API REQUEST
 ========================================================= */
 
 async function api(action, data = {}) {
 
-  const response = await fetch(API_ENDPOINT, {
-    method: "POST",
-    mode: "cors",
-    redirect: "follow",
-    headers: {
-      "Content-Type": "text/plain;charset=utf-8"
-    },
-    body: JSON.stringify({
-      action,
-      ...data
-    })
-  });
+    const response = await fetch(API_ENDPOINT, {
+        method: "POST",
+        mode: "cors",
+        redirect: "follow",
 
-  if (!response.ok) {
-    throw new Error("API connection failed. HTTP " + response.status);
-  }
+        headers: {
+            "Content-Type": "text/plain;charset=utf-8"
+        },
 
-  const result = await response.json();
+        body: JSON.stringify({
+            action: action,
+            ...data
+        })
+    });
 
-  if (result.success === false) {
-    throw new Error(result.message || "API request failed.");
-  }
+    if (!response.ok) {
+        throw new Error("Server error: " + response.status);
+    }
 
-  return result;
+    const result = await response.json();
+
+    if (!result.success) {
+        throw new Error(result.message || "API request failed");
+    }
+
+    return result;
 }
 
 
 /* =========================================================
-   LOAD PRODUCTS AND CATEGORIES
+   LOAD PRODUCTS FROM GOOGLE SHEETS
 ========================================================= */
 
-async function loadCatalogue() {
+async function loadProducts() {
 
-  $("loadingState").classList.remove("hidden");
-  $("errorState").classList.add("hidden");
-  $("productGrid").innerHTML = "";
-  $("emptyState").classList.add("hidden");
+    const loading = $("loadingState");
+    const error = $("errorState");
 
-  try {
+    loading?.classList.remove("hidden");
+    error?.classList.add("hidden");
 
-    const [productResponse, categoryResponse] = await Promise.all([
-      api("listProducts"),
-      api("listCategories")
-    ]);
+    if ($("productGrid")) {
+        $("productGrid").innerHTML = "";
+    }
 
-    // Supports API response:
-    // { success:true, data:[...] }
-    // { success:true, products:[...] }
+    try {
 
-    state.products = Array.isArray(productResponse.products)
-      ? productResponse.products
-      : Array.isArray(productResponse.data)
-        ? productResponse.data
-        : [];
+        const result = await api("listProducts");
 
-    state.categories = Array.isArray(categoryResponse.categories)
-      ? categoryResponse.categories
-      : Array.isArray(categoryResponse.data)
-        ? categoryResponse.data
-        : [];
+        /*
+         * Supports API responses:
+         * { success:true, data:[...] }
+         * { success:true, products:[...] }
+         */
 
-    // Only Active products
-    state.products = state.products.filter(product =>
-      String(product.status || "Active").toLowerCase() === "active"
-    );
+        const records = Array.isArray(result.data)
+            ? result.data
+            : Array.isArray(result.products)
+                ? result.products
+                : [];
 
-    fillCategories();
-    renderProducts();
+        products = records.filter(product =>
+            String(product.status || "Active").trim().toLowerCase() === "active"
+        );
 
-  } catch (error) {
+        products = products.map(product => ({
+            id: product.id || "",
+            sku: product.sku || "",
+            name: product.name || "Unnamed Product",
+            category: product.category || "General",
+            short_description: product.short_description || "",
+            description: product.description || "",
+            specifications: product.specifications || "",
+            image_url: product.image_url || "",
+            datasheet_url: product.datasheet_url || "",
+            unit: product.unit || "",
+            status: product.status || "Active"
+        }));
 
-    console.error("Catalogue loading error:", error);
+        buildCategories();
 
-    $("errorState").textContent =
-      "Unable to load products. " + error.message;
+        renderProducts();
 
-    $("errorState").classList.remove("hidden");
+    } catch (errorMessage) {
 
-  } finally {
+        console.error("Product loading error:", errorMessage);
 
-    $("loadingState").classList.add("hidden");
+        if (error) {
+            error.textContent =
+                "Unable to load products. Please refresh the page and try again.";
 
-  }
+            error.classList.remove("hidden");
+        }
 
+    } finally {
+
+        loading?.classList.add("hidden");
+
+    }
 }
 
 
 /* =========================================================
-   CATEGORY DROPDOWN
+   CATEGORY FILTER
 ========================================================= */
 
-function fillCategories() {
+function buildCategories() {
 
-  const select = $("categoryFilter");
+    const select = $("categoryFilter");
 
-  const currentValue = state.category;
+    if (!select) return;
 
-  const categories = [
-    ...new Set([
-      ...state.categories.map(item =>
-        typeof item === "string" ? item : item.name
-      ),
-      ...state.products.map(item => item.category)
-    ])
-  ]
-  .filter(Boolean)
-  .sort((a, b) => a.localeCompare(b));
+    categories = [
+        ...new Set(
+            products
+                .map(p => p.category)
+                .filter(Boolean)
+        )
+    ].sort();
 
-  select.innerHTML = '<option value="">All categories</option>';
+    select.innerHTML =
+        '<option value="">All categories</option>';
 
-  categories.forEach(category => {
+    categories.forEach(category => {
 
-    const option = document.createElement("option");
+        const option = document.createElement("option");
 
-    option.value = category;
-    option.textContent = category;
+        option.value = category;
+        option.textContent = category;
 
-    select.appendChild(option);
+        select.appendChild(option);
 
-  });
-
-  select.value = categories.includes(currentValue) ? currentValue : "";
-
-  if (!select.value) {
-    state.category = "";
-  }
-
+    });
 }
 
 
 /* =========================================================
-   RENDER PRODUCT CARDS
+   RENDER PRODUCTS
 ========================================================= */
 
 function renderProducts() {
 
-  const grid = $("productGrid");
+    const grid = $("productGrid");
+    const empty = $("emptyState");
 
-  const search = state.search;
+    if (!grid) return;
 
-  const filteredProducts = state.products.filter(product => {
+    const search = ($("searchInput")?.value || "")
+        .trim()
+        .toLowerCase();
 
-    const searchableText = [
-      product.name,
-      product.sku,
-      product.category,
-      product.short_description,
-      product.description,
-      product.specifications
-    ].join(" ").toLowerCase();
+    const selectedCategory =
+        $("categoryFilter")?.value || "";
 
-    const matchesSearch = searchableText.includes(search);
+    const filtered = products.filter(product => {
 
-    const matchesCategory =
-      !state.category || product.category === state.category;
+        const searchable = [
+            product.name,
+            product.sku,
+            product.category,
+            product.short_description,
+            product.description,
+            product.specifications
+        ].join(" ").toLowerCase();
 
-    return matchesSearch && matchesCategory;
+        const matchesSearch = searchable.includes(search);
 
-  });
+        const matchesCategory =
+            !selectedCategory ||
+            product.category === selectedCategory;
 
-  grid.innerHTML = "";
+        return matchesSearch && matchesCategory;
 
-  if (filteredProducts.length === 0) {
+    });
 
-    $("emptyState").classList.remove("hidden");
+    grid.innerHTML = "";
 
-    return;
+    if (filtered.length === 0) {
 
-  }
+        empty?.classList.remove("hidden");
 
-  $("emptyState").classList.add("hidden");
+        return;
 
-  filteredProducts.forEach(product => {
+    }
 
-    const card = document.createElement("article");
+    empty?.classList.add("hidden");
 
-    card.className = "product-card";
+    filtered.forEach(product => {
 
-    const image = safeImageUrl(product.image_url);
+        const card = document.createElement("article");
 
-    card.innerHTML = `
+        card.className = "product-card";
 
-      <div class="product-image">
+        const image = safeImage(product.image_url);
 
-        ${
-          image
-            ? `<img src="${escapeHTML(image)}"
-                    alt="${escapeHTML(product.name)}"
-                    loading="lazy"
-                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">`
-            : ""
-        }
+        card.innerHTML = `
+            <div class="product-image">
+                ${
+                    image
+                    ? `<img src="${escAttr(image)}"
+                            alt="${escAttr(product.name)}"
+                            loading="lazy"
+                            onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+                       <div class="image-placeholder" style="display:none">NOVA</div>`
+                    : `<div class="image-placeholder">NOVA</div>`
+                }
+            </div>
 
-        <div class="image-placeholder"
-             style="${image ? "display:none" : "display:flex"}">
-          <span>▦</span>
-        </div>
+            <div class="product-info">
 
-      </div>
+                <span class="product-category">
+                    ${esc(product.category)}
+                </span>
 
-      <div class="product-info">
+                <h3>${esc(product.name)}</h3>
 
-        <span class="product-category">
-          ${escapeHTML(product.category || "General")}
-        </span>
+                <p class="product-sku">
+                    SKU: ${esc(product.sku)}
+                </p>
 
-        <h3>${escapeHTML(product.name)}</h3>
+                <p class="product-description">
+                    ${esc(product.short_description)}
+                </p>
 
-        <p class="product-description">
-          ${escapeHTML(product.short_description || "")}
-        </p>
+                <div class="product-actions">
 
-        <div class="product-sku">
-          SKU: ${escapeHTML(product.sku || "-")}
-        </div>
+                    <button
+                        class="btn light"
+                        type="button"
+                        data-details="${escAttr(product.id)}">
+                        View Details
+                    </button>
 
-        <div class="product-actions">
+                    <button
+                        class="btn primary"
+                        type="button"
+                        data-add="${escAttr(product.id)}">
+                        Add to Enquiry
+                    </button>
 
-          <button class="btn-outline"
-                  type="button"
-                  data-action="details">
-            View Details
-          </button>
+                </div>
 
-          <button class="btn primary"
-                  type="button"
-                  data-action="add">
-            + Add Enquiry
-          </button>
+            </div>
+        `;
 
-        </div>
+        grid.appendChild(card);
 
-      </div>
+    });
 
-    `;
+    grid.querySelectorAll("[data-details]").forEach(button => {
 
-    card.querySelector('[data-action="details"]')
-      .addEventListener("click", () => openProductModal(product));
+        button.addEventListener("click", () => {
+            const product = products.find(
+                p => String(p.id) === button.dataset.details
+            );
 
-    card.querySelector('[data-action="add"]')
-      .addEventListener("click", () => addToCart(product));
+            if (product) openProductModal(product);
+        });
 
-    grid.appendChild(card);
+    });
 
-  });
+    grid.querySelectorAll("[data-add]").forEach(button => {
+
+        button.addEventListener("click", () => {
+            addToCart(button.dataset.add);
+        });
+
+    });
 
 }
 
@@ -344,85 +338,80 @@ function renderProducts() {
 
 function openProductModal(product) {
 
-  const image = safeImageUrl(product.image_url);
+    const modal = $("productModal");
+    const content = $("modalContent");
 
-  const datasheet = safeLinkUrl(product.datasheet_url);
+    if (!modal || !content) return;
 
-  $("modalContent").innerHTML = `
+    const image = safeImage(product.image_url);
 
-    <div class="modal-product">
+    content.innerHTML = `
 
-      ${
-        image
-          ? `<img class="modal-product-image"
-                  src="${escapeHTML(image)}"
-                  alt="${escapeHTML(product.name)}"
-                  onerror="this.style.display='none'">`
-          : ""
-      }
+        <div class="modal-product">
 
-      <span class="eyebrow">
-        ${escapeHTML(product.category || "Product")}
-      </span>
+            ${
+                image
+                ? `<img class="modal-product-image"
+                        src="${escAttr(image)}"
+                        alt="${escAttr(product.name)}">`
+                : `<div class="image-placeholder">NOVA</div>`
+            }
 
-      <h2>${escapeHTML(product.name)}</h2>
+            <div class="modal-product-info">
 
-      <p>${escapeHTML(product.description || product.short_description || "")}</p>
+                <span class="eyebrow">
+                    ${esc(product.category)}
+                </span>
 
-      <div class="modal-specifications">
+                <h2>${esc(product.name)}</h2>
 
-        <h4>Product Information</h4>
+                <p>SKU: ${esc(product.sku)}</p>
 
-        <p><strong>SKU:</strong> ${escapeHTML(product.sku || "-")}</p>
+                <p>${esc(product.description)}</p>
 
-        <p><strong>Category:</strong> ${escapeHTML(product.category || "-")}</p>
+                <h4>Technical Specifications</h4>
 
-        <p><strong>Unit:</strong> ${escapeHTML(product.unit || "-")}</p>
+                <div class="product-specifications">
+                    ${formatSpecifications(product.specifications)}
+                </div>
 
-        <p><strong>Specifications:</strong></p>
+                ${
+                    product.datasheet_url
+                    ? `<a class="btn light"
+                          href="${escAttr(safeLink(product.datasheet_url))}"
+                          target="_blank"
+                          rel="noopener noreferrer">
+                          View Datasheet
+                       </a>`
+                    : ""
+                }
 
-        <div class="specification-text">
-          ${escapeHTML(product.specifications || "Specifications not available.")}
+                <button
+                    class="btn primary"
+                    type="button"
+                    id="modalAddToCart">
+                    Add to Enquiry
+                </button>
+
+            </div>
+
         </div>
 
-      </div>
+    `;
 
-      ${
-        datasheet
-          ? `<a class="btn-outline datasheet-link"
-                href="${escapeHTML(datasheet)}"
-                target="_blank"
-                rel="noopener noreferrer">
-                View Datasheet
-             </a>`
-          : ""
-      }
+    $("modalAddToCart")?.addEventListener("click", () => {
+        addToCart(product.id);
+        closeProductModal();
+    });
 
-      <button class="btn primary full"
-              id="modalAddEnquiry">
-        + Add to Enquiry
-      </button>
-
-    </div>
-
-  `;
-
-  $("modalAddEnquiry").addEventListener("click", () => {
-
-    addToCart(product);
-
-    closeProductModal();
-
-  });
-
-  $("productModal").classList.remove("hidden");
+    modal.classList.remove("hidden");
 
 }
 
 
 function closeProductModal() {
 
-  $("productModal").classList.add("hidden");
+    $("productModal")?.classList.add("hidden");
 
 }
 
@@ -431,43 +420,43 @@ function closeProductModal() {
    ADD PRODUCT TO ENQUIRY CART
 ========================================================= */
 
-function addToCart(product) {
+function addToCart(productId) {
 
-  const existing = state.cart.find(item =>
-    String(item.product_id) === String(product.id)
-  );
+    const product = products.find(
+        p => String(p.id) === String(productId)
+    );
 
-  if (existing) {
+    if (!product) {
+        showToast("Product not found");
+        return;
+    }
 
-    existing.quantity += 1;
+    const existing = cart.find(
+        item => String(item.product_id) === String(product.id)
+    );
 
-  } else {
+    if (existing) {
 
-    state.cart.push({
+        existing.quantity += 1;
 
-      product_id: product.id,
+    } else {
 
-      product_name: product.name,
+        cart.push({
 
-      sku: product.sku || "",
+            product_id: product.id,
+            product_name: product.name,
+            sku: product.sku,
+            quantity: 1
 
-      unit: product.unit || "",
+        });
 
-      quantity: 1,
+    }
 
-      notes: ""
+    saveCart();
 
-    });
+    renderCart();
 
-  }
-
-  saveCart();
-
-  renderCart();
-
-  updateCartCount();
-
-  showToast("Product added to your enquiry list.");
+    showToast("Product added to enquiry list");
 
 }
 
@@ -478,165 +467,175 @@ function addToCart(product) {
 
 function saveCart() {
 
-  localStorage.setItem(
-    "novaEnquiryCart",
-    JSON.stringify(state.cart)
-  );
+    localStorage.setItem(
+        "novaEnquiryCart",
+        JSON.stringify(cart)
+    );
 
 }
 
 
 /* =========================================================
-   UPDATE CART COUNT
-========================================================= */
-
-function updateCartCount() {
-
-  const count = state.cart.reduce(
-    (total, item) => total + Number(item.quantity || 0),
-    0
-  );
-
-  $("cartCount").textContent = count;
-
-}
-
-
-/* =========================================================
-   RENDER CART ITEMS
+   RENDER CART
 ========================================================= */
 
 function renderCart() {
 
-  const container = $("cartItems");
+    const container = $("cartItems");
 
-  if (state.cart.length === 0) {
+    const count = $("cartCount");
 
-    container.innerHTML = `
-      <p class="muted">Your enquiry list is empty.</p>
-    `;
+    const totalItems = cart.reduce(
+        (total, item) => total + Number(item.quantity || 0),
+        0
+    );
 
-    updateCartCount();
+    if (count) {
+        count.textContent = totalItems;
+    }
 
-    return;
+    if (!container) return;
 
-  }
+    if (cart.length === 0) {
 
-  container.innerHTML = state.cart.map((item, index) => `
+        container.innerHTML =
+            '<p class="muted">Your enquiry list is empty.</p>';
 
-    <div class="cart-item">
+        return;
 
-      <div class="cart-item-info">
+    }
 
-        <strong>${escapeHTML(item.product_name)}</strong>
+    container.innerHTML = "";
 
-        <small>SKU: ${escapeHTML(item.sku || "-")}</small>
+    cart.forEach((item, index) => {
 
-      </div>
+        const div = document.createElement("div");
 
-      <div class="cart-item-controls">
+        div.className = "cart-item";
 
-        <button type="button"
-                data-minus="${index}"
-                aria-label="Decrease quantity">−</button>
+        div.innerHTML = `
 
-        <input type="number"
-               min="1"
-               max="999999"
-               value="${Number(item.quantity) || 1}"
-               data-quantity="${index}"
-               aria-label="Quantity">
+            <div class="cart-item-info">
 
-        <button type="button"
-                data-plus="${index}"
-                aria-label="Increase quantity">+</button>
+                <strong>${esc(item.product_name)}</strong>
 
-        <button type="button"
-                class="remove-item"
+                <small>SKU: ${esc(item.sku)}</small>
+
+                <div class="quantity-control">
+
+                    <button type="button"
+                        data-minus="${index}">−</button>
+
+                    <input
+                        type="number"
+                        min="1"
+                        max="999999"
+                        value="${Number(item.quantity)}"
+                        data-quantity="${index}">
+
+                    <button type="button"
+                        data-plus="${index}">+</button>
+
+                </div>
+
+            </div>
+
+            <button
+                class="remove-cart-item"
+                type="button"
                 data-remove="${index}">
-          ×
-        </button>
+                Remove
+            </button>
 
-      </div>
+        `;
 
-    </div>
+        container.appendChild(div);
 
-  `).join("");
+    });
 
-  // Quantity minus
-  container.querySelectorAll("[data-minus]").forEach(button => {
+    container.querySelectorAll("[data-minus]").forEach(button => {
 
-    button.addEventListener("click", () => {
+        button.addEventListener("click", () => {
+            changeQuantity(Number(button.dataset.minus), -1);
+        });
 
-      const index = Number(button.dataset.minus);
+    });
 
-      state.cart[index].quantity = Math.max(
+    container.querySelectorAll("[data-plus]").forEach(button => {
+
+        button.addEventListener("click", () => {
+            changeQuantity(Number(button.dataset.plus), 1);
+        });
+
+    });
+
+    container.querySelectorAll("[data-remove]").forEach(button => {
+
+        button.addEventListener("click", () => {
+            removeCartItem(Number(button.dataset.remove));
+        });
+
+    });
+
+    container.querySelectorAll("[data-quantity]").forEach(input => {
+
+        input.addEventListener("change", () => {
+
+            const index = Number(input.dataset.quantity);
+
+            const quantity = Math.max(
+                1,
+                Math.min(999999, Number(input.value) || 1)
+            );
+
+            cart[index].quantity = quantity;
+
+            saveCart();
+
+            renderCart();
+
+        });
+
+    });
+
+}
+
+
+/* =========================================================
+   CHANGE QUANTITY
+========================================================= */
+
+function changeQuantity(index, amount) {
+
+    if (!cart[index]) return;
+
+    cart[index].quantity = Math.max(
         1,
-        Number(state.cart[index].quantity) - 1
-      );
+        Number(cart[index].quantity) + amount
+    );
 
-      saveCart();
-      renderCart();
+    saveCart();
 
-    });
+    renderCart();
 
-  });
+}
 
-  // Quantity plus
-  container.querySelectorAll("[data-plus]").forEach(button => {
 
-    button.addEventListener("click", () => {
+/* =========================================================
+   REMOVE CART ITEM
+========================================================= */
 
-      const index = Number(button.dataset.plus);
+function removeCartItem(index) {
 
-      state.cart[index].quantity =
-        Number(state.cart[index].quantity) + 1;
+    if (!cart[index]) return;
 
-      saveCart();
-      renderCart();
+    cart.splice(index, 1);
 
-    });
+    saveCart();
 
-  });
+    renderCart();
 
-  // Direct quantity input
-  container.querySelectorAll("[data-quantity]").forEach(input => {
-
-    input.addEventListener("change", () => {
-
-      const index = Number(input.dataset.quantity);
-
-      state.cart[index].quantity = Math.min(
-        999999,
-        Math.max(1, Number(input.value) || 1)
-      );
-
-      saveCart();
-      renderCart();
-
-    });
-
-  });
-
-  // Remove item
-  container.querySelectorAll("[data-remove]").forEach(button => {
-
-    button.addEventListener("click", () => {
-
-      const index = Number(button.dataset.remove);
-
-      state.cart.splice(index, 1);
-
-      saveCart();
-      renderCart();
-
-      showToast("Product removed.");
-
-    });
-
-  });
-
-  updateCartCount();
+    showToast("Product removed");
 
 }
 
@@ -647,227 +646,234 @@ function renderCart() {
 
 function openCart() {
 
-  $("enquiryDrawer").classList.add("open");
+    $("enquiryDrawer")?.classList.add("open");
 
-  $("drawerBackdrop").classList.add("show");
+    $("drawerBackdrop")?.classList.add("open");
 
-  renderCart();
+    renderCart();
 
 }
 
 
 function closeCart() {
 
-  $("enquiryDrawer").classList.remove("open");
+    $("enquiryDrawer")?.classList.remove("open");
 
-  $("drawerBackdrop").classList.remove("show");
+    $("drawerBackdrop")?.classList.remove("open");
 
 }
 
 
 /* =========================================================
-   SUBMIT ENQUIRY
+   SUBMIT ENQUIRY TO GOOGLE SHEETS
 ========================================================= */
 
 async function submitEnquiry(event) {
 
-  event.preventDefault();
+    event.preventDefault();
 
-  if (state.cart.length === 0) {
+    if (cart.length === 0) {
 
-    $("formMessage").textContent =
-      "Please add at least one product to your enquiry list.";
+        showToast("Please add products to your enquiry list");
 
-    return;
+        return;
 
-  }
+    }
 
-  const form = event.currentTarget;
+    const form = event.currentTarget;
 
-  const formData = new FormData(form);
+    const formData = new FormData(form);
 
-  const customer = {
+    const customer = {
 
-    name: String(formData.get("name") || "").trim(),
+        name: String(formData.get("name") || "").trim(),
 
-    company: String(formData.get("company") || "").trim(),
+        company: String(formData.get("company") || "").trim(),
 
-    email: String(formData.get("email") || "").trim(),
+        email: String(formData.get("email") || "").trim(),
 
-    phone: String(formData.get("phone") || "").trim(),
+        phone: String(formData.get("phone") || "").trim(),
 
-    address: String(formData.get("address") || "").trim()
-
-  };
-
-  const message = String(
-    formData.get("message") || ""
-  ).trim();
-
-  if (!customer.name || !customer.email || !customer.phone) {
-
-    $("formMessage").textContent =
-      "Please complete all required contact details.";
-
-    return;
-
-  }
-
-  const button = $("submitEnquiry");
-
-  button.disabled = true;
-
-  button.textContent = "Submitting...";
-
-  $("formMessage").textContent = "";
-
-  try {
-
-    const payload = {
-
-      customer: customer,
-
-      items: state.cart.map(item => ({
-
-        product_id: item.product_id,
-
-        product_name: item.product_name,
-
-        sku: item.sku,
-
-        unit: item.unit,
-
-        quantity: Number(item.quantity),
-
-        notes: item.notes || ""
-
-      })),
-
-      message: message
+        address: String(formData.get("address") || "").trim()
 
     };
 
-    const result = await api("submitEnquiry", payload);
+    const message = String(
+        formData.get("message") || ""
+    ).trim();
 
-    if (result.success === false) {
-      throw new Error(result.message || "Enquiry submission failed.");
+    if (!customer.name || !customer.email || !customer.phone) {
+
+        showToast("Please fill all required fields");
+
+        return;
+
     }
 
-    state.cart = [];
+    const button = $("submitEnquiry");
 
-    saveCart();
+    const messageBox = $("formMessage");
 
-    renderCart();
+    button.disabled = true;
 
-    updateCartCount();
+    button.textContent = "Submitting...";
 
-    form.reset();
+    try {
 
-    $("formMessage").textContent =
-      result.message || "Your enquiry has been submitted successfully.";
+        const result = await api("submitEnquiry", {
 
-    showToast("Enquiry submitted successfully!");
+            customer: customer,
 
-    setTimeout(() => {
+            items: cart.map(item => ({
+                product_id: item.product_id,
+                product_name: item.product_name,
+                sku: item.sku,
+                quantity: Number(item.quantity)
+            })),
 
-      closeCart();
+            message: message
 
-      $("formMessage").textContent =
-        "Your enquiry will be recorded in our system.";
+        });
 
-    }, 2500);
+        showToast(
+            result.message || "Enquiry submitted successfully"
+        );
 
-  } catch (error) {
+        cart = [];
 
-    console.error("Enquiry submission error:", error);
+        saveCart();
 
-    $("formMessage").textContent =
-      "Unable to submit enquiry: " + error.message;
+        renderCart();
 
-  } finally {
+        form.reset();
 
-    button.disabled = false;
+        if (messageBox) {
+            messageBox.textContent =
+                "Your enquiry has been submitted successfully.";
+        }
 
-    button.textContent = "Submit Enquiry";
+    } catch (error) {
 
-  }
+        console.error("Enquiry submission error:", error);
+
+        if (messageBox) {
+            messageBox.textContent =
+                error.message || "Unable to submit enquiry. Please try again.";
+        }
+
+        showToast("Enquiry submission failed");
+
+    } finally {
+
+        button.disabled = false;
+
+        button.textContent = "Submit Enquiry";
+
+    }
 
 }
 
 
 /* =========================================================
-   SAFE IMAGE URL
+   MOBILE NAVIGATION
 ========================================================= */
 
-function safeImageUrl(value) {
+function toggleMenu() {
 
-  if (!value) return "";
+    $("mainNav")?.classList.toggle("open");
 
-  try {
+}
 
-    const url = new URL(value);
 
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      return "";
+/* =========================================================
+   HELPER FUNCTIONS
+========================================================= */
+
+function esc(value) {
+
+    return String(value ?? "").replace(
+        /[&<>"']/g,
+        character => ({
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;"
+        })[character]
+    );
+
+}
+
+
+function escAttr(value) {
+
+    return esc(value);
+
+}
+
+
+function safeImage(url) {
+
+    const value = String(url || "").trim();
+
+    if (!value) return "";
+
+    try {
+
+        const parsed = new URL(value);
+
+        if (parsed.protocol === "https:" || parsed.protocol === "http:") {
+            return parsed.href;
+        }
+
+    } catch (error) {
+
+        return "";
+
     }
-
-    return url.href;
-
-  } catch (error) {
 
     return "";
 
-  }
+}
+
+
+function safeLink(url) {
+
+    return safeImage(url);
 
 }
 
 
-/* =========================================================
-   SAFE LINK URL
-========================================================= */
+function formatSpecifications(value) {
 
-function safeLinkUrl(value) {
+    const text = String(value || "").trim();
 
-  if (!value) return "";
-
-  try {
-
-    const url = new URL(value);
-
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      return "";
+    if (!text) {
+        return "<p>Specifications not available.</p>";
     }
 
-    return url.href;
+    return text.split(/\r?\n/).map(line => {
 
-  } catch (error) {
+        const parts = line.split(":");
 
-    return "";
+        if (parts.length > 1) {
 
-  }
+            const heading = parts.shift().trim();
 
-}
+            const detail = parts.join(":").trim();
 
+            return `
+                <p>
+                    <strong>${esc(heading)}:</strong>
+                    ${esc(detail)}
+                </p>
+            `;
 
-/* =========================================================
-   HTML ESCAPE
-========================================================= */
+        }
 
-function escapeHTML(value) {
+        return `<p>${esc(line)}</p>`;
 
-  return String(value ?? "").replace(/[&<>"']/g, character => ({
-
-    "&": "&amp;",
-
-    "<": "&lt;",
-
-    ">": "&gt;",
-
-    '"': "&quot;",
-
-    "'": "&#39;"
-
-  })[character]);
+    }).join("");
 
 }
 
@@ -878,21 +884,20 @@ function escapeHTML(value) {
 
 function showToast(message) {
 
-  const toast = $("toast");
+    const toast = $("toast");
 
-  toast.textContent = message;
+    if (!toast) return;
 
-  toast.classList.add("show");
+    toast.textContent = message;
 
-  setTimeout(() => {
+    toast.classList.add("show");
 
-    toast.classList.remove("show");
+    clearTimeout(window.novaToastTimer);
 
-  }, 2500);
+    window.novaToastTimer = setTimeout(() => {
+
+        toast.classList.remove("show");
+
+    }, 3000);
 
 }
-
-
-/* =========================================================
-   END OF NOVA APP.JS
-========================================================= */
