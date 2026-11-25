@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>NOVA Admin Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div id="loginView" class="login-wrap">
+  <form id="loginForm" class="login-card">
+    <div class="brand"><span class="brand-mark">N</span><span>NOVA <small>GLOBAL ENTERPRISES</small></span></div>
+    <p class="eyebrow">SECURE ADMIN AREA</p>
+    <h1>Admin Login</h1>
+    <p class="muted">Sign in to manage products, customers and enquiries.</p>
+    <label>Username<input name="username" autocomplete="username" required></label>
+    <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="btn primary full" id="loginButton">Sign in</button>
+    <p class="message" id="loginMessage" role="status"></p>
+    <a class="back-link" href="./">← Back to website</a>
+  </form>
+</div>
+
+<div id="appView" class="app hidden">
+  <aside class="sidebar">
+    <a class="brand side-brand" href="./"><span class="brand-mark">N</span><span>NOVA <small>ADMIN</small></span></a>
+    <nav>
+      <button class="side-link active" data-view="overview">▦ <span>Overview</span></button>
+      <button class="side-link" data-view="products">□ <span>Products</span></button>
+      <button class="side-link" data-view="enquiries">☷ <span>Enquiries</span></button>
+      <button class="side-link" data-view="customers">♙ <span>Customers</span></button>
+    </nav>
+    <button id="logoutButton" class="logout">↪ Sign out</button>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div><span class="eyebrow">NOVA GLOBAL ENTERPRISES</span><h1 id="pageTitle">Overview</h1></div>
+      <div class="top-actions"><span id="adminName" class="admin-name"></span><a href="./" target="_blank" rel="noopener">View website ↗</a></div>
+    </header>
+
+    <section id="overviewView" class="view">
+      <div class="stats-grid">
+        <article class="stat-card"><span>Total Products</span><strong id="statProducts">0</strong></article>
+        <article class="stat-card"><span>Active Products</span><strong id="statActive">0</strong></article>
+        <article class="stat-card"><span>Total Enquiries</span><strong id="statEnquiries">0</strong></article>
+        <article class="stat-card"><span>New Enquiries</span><strong id="statNew">0</strong></article>
+        <article class="stat-card"><span>Total Customers</span><strong id="statCustomers">0</strong></article>
+      </div>
+      <section class="panel">
+        <div class="panel-head"><div><h2>Recent enquiries</h2><p class="muted">Latest customer requirements</p></div><button class="btn outline" data-go="enquiries">View all</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Enquiry No.</th><th>Customer</th><th>Company</th><th>Status</th><th>Date</th></tr></thead><tbody id="recentEnquiries"></tbody></table></div>
+      </section>
+    </section>
+
+    <section id="productsView" class="view hidden">
+      <section class="panel">
+        <div class="panel-head"><div><h2>Product catalogue</h2><p class="muted">Add and maintain the products shown on the public website.</p></div><button class="btn primary" id="addProductButton">+ Add product</button></div>
+        <div class="toolbar"><input id="productSearch" placeholder="Search name, SKU or category..."></div>
+        <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead><tbody id="productsTable"></tbody></table></div>
+      </section>
+    </section>
+
+    <section id="enquiriesView" class="view hidden">
+      <section class="panel">
+        <div class="panel-head"><div><h2>Customer enquiries</h2><p class="muted">Review requested products and update enquiry status.</p></div><button class="btn outline" id="refreshEnquiries">Refresh</button></div>
+        <div id="enquiriesList" class="enquiry-list"></div>
+      </section>
+    </section>
+
+    <section id="customersView" class="view hidden">
+      <section class="panel">
+        <div class="panel-head"><div><h2>Customers</h2><p class="muted">Customer records submitted through the website.</p></div><button class="btn outline" id="refreshCustomers">Refresh</button></div>
+        <div class="table-wrap"><table><thead><tr><th>Name</th><th>Company</th><th>Email</th><th>Phone</th><th>Address</th><th>Created</th></tr></thead><tbody id="customersTable"></tbody></table></div>
+      </section>
+    </section>
+  </main>
+</div>
+
+<div id="productDialog" class="dialog-backdrop hidden">
+  <form id="productForm" class="dialog">
+    <div class="dialog-head"><div><span class="eyebrow">CATALOGUE</span><h2 id="productDialogTitle">Add product</h2></div><button type="button" class="icon-close" id="closeProductDialog">×</button></div>
+    <input type="hidden" name="id">
+    <div class="form-grid">
+      <label>Product name *<input name="name" required maxlength="200"></label>
+      <label>SKU<input name="sku" maxlength="100"></label>
+      <label>Category<input name="category" maxlength="120" placeholder="e.g. Cable Management"></label>
+      <label>Unit<input name="unit" maxlength="40" placeholder="Nos"></label>
+      <label class="span-2">Short description<input name="short_description" maxlength="300"></label>
+      <label class="span-2">Description<textarea name="description" rows="3"></textarea></label>
+      <label class="span-2">Technical specifications<textarea name="specifications" rows="3"></textarea></label>
+      <label class="span-2">Product image URL<input name="image_url" type="url" placeholder="https://..."></label>
+      <label class="span-2">Datasheet URL<input name="datasheet_url" type="url" placeholder="https://..."></label>
+      <label>Status<select name="status"><option>Active</option><option>Inactive</option></select></label>
+    </div>
+    <div class="dialog-actions"><button type="button" class="btn outline" id="cancelProduct">Cancel</button><button class="btn primary" id="saveProductButton">Save product</button></div>
+    <p class="message" id="productMessage"></p>
+  </form>
+</div>
+<div id="toast" class="toast"></div>
+<script src="admin.js"></script>
+</body>
+</html>
