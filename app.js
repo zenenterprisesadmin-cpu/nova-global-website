@@ -1,161 +1,898 @@
-// Paste your deployed Google Apps Script Web App URL ending in /exec.
-const API_ENDPOINT = "https://script.google.com/macros/s/AKfycbwnBd6CdsFV1UIMJYaEkeiTypivKOJzEdpD6jCj51tumDQ083fIi5GX3sypz26B0ov4bA/exec";
-const state = { products: [], categories: [], cart: JSON.parse(localStorage.getItem("novaEnquiryCart") || "[]") };
-const $ = (id) => document.getElementById(id);
+
+/************************************************************
+ * NOVA GLOBAL ENTERPRISES
+ * B2B WEBSITE - COMPLETE APP.JS
+ *
+ * Backend: Google Apps Script
+ * Database: Google Sheets
+ ************************************************************/
+
+const API_ENDPOINT =
+  "https://script.google.com/macros/s/AKfycbwnBd6CdsFV1UIMJYaEkeiTypivKOJzEdpD6jCj51tumDQ083fIi5GX3sypz26B0ov4bA/exec";
+
+/* =========================================================
+   GLOBAL STATE
+========================================================= */
+
+const $ = id => document.getElementById(id);
+
+const state = {
+  products: [],
+  categories: [],
+  cart: JSON.parse(localStorage.getItem("novaEnquiryCart") || "[]"),
+  search: "",
+  category: ""
+};
+
+/* =========================================================
+   INITIALIZE
+========================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
+
   $("year").textContent = new Date().getFullYear();
-  $("menuToggle").addEventListener("click", () => $("mainNav").classList.toggle("show"));
+
+  // Search
+  $("searchInput").addEventListener("input", event => {
+    state.search = event.target.value.trim().toLowerCase();
+    renderProducts();
+  });
+
+  // Category filter
+  $("categoryFilter").addEventListener("change", event => {
+    state.category = event.target.value;
+    renderProducts();
+  });
+
+  // Cart controls
   $("openCart").addEventListener("click", openCart);
   $("heroEnquiry").addEventListener("click", openCart);
   $("closeCart").addEventListener("click", closeCart);
   $("drawerBackdrop").addEventListener("click", closeCart);
+
+  // Product modal
   $("closeModal").addEventListener("click", closeProductModal);
-  $("productModal").addEventListener("click", e => { if (e.target === $("productModal")) closeProductModal(); });
-  $("searchInput").addEventListener("input", renderProducts);
-  $("categoryFilter").addEventListener("change", renderProducts);
+
+  $("productModal").addEventListener("click", event => {
+    if (event.target === $("productModal")) {
+      closeProductModal();
+    }
+  });
+
+  // Enquiry form
   $("enquiryForm").addEventListener("submit", submitEnquiry);
-  updateCartUI();
+
+  // Mobile navigation
+  $("menuToggle").addEventListener("click", () => {
+    $("mainNav").classList.toggle("open");
+  });
+
+  document.querySelectorAll("#mainNav a").forEach(link => {
+    link.addEventListener("click", () => {
+      $("mainNav").classList.remove("open");
+    });
+  });
+
+  // Initial UI
+  updateCartCount();
+  renderCart();
+
+  // Load products
   loadCatalogue();
+
 });
 
+
+/* =========================================================
+   GOOGLE APPS SCRIPT API
+========================================================= */
+
 async function api(action, data = {}) {
-  if (!API_ENDPOINT.startsWith("https://script.google.com/")) {
-    throw new Error("Please set API_ENDPOINT in assets/app.js to your Apps Script /exec URL.");
-  }
-  // text/plain avoids the browser's JSON preflight request. Apps Script reads e.postData.contents.
+
   const response = await fetch(API_ENDPOINT, {
     method: "POST",
     mode: "cors",
     redirect: "follow",
-    headers: {"Content-Type":"text/plain;charset=utf-8"},
-    body: JSON.stringify({action, ...data})
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8"
+    },
+    body: JSON.stringify({
+      action,
+      ...data
+    })
   });
+
+  if (!response.ok) {
+    throw new Error("API connection failed. HTTP " + response.status);
+  }
+
   const result = await response.json();
-  if (!response.ok || !result.success) throw new Error(result.message || "Request failed");
+
+  if (result.success === false) {
+    throw new Error(result.message || "API request failed.");
+  }
+
   return result;
 }
 
+
+/* =========================================================
+   LOAD PRODUCTS AND CATEGORIES
+========================================================= */
+
 async function loadCatalogue() {
+
   $("loadingState").classList.remove("hidden");
   $("errorState").classList.add("hidden");
+  $("productGrid").innerHTML = "";
+  $("emptyState").classList.add("hidden");
+
   try {
-    const [p, c] = await Promise.all([api("listProducts"), api("listCategories")]);
-    state.products = Array.isArray(p.products) ? p.products : [];
-    state.categories = Array.isArray(c.categories) ? c.categories : [];
+
+    const [productResponse, categoryResponse] = await Promise.all([
+      api("listProducts"),
+      api("listCategories")
+    ]);
+
+    // Supports API response:
+    // { success:true, data:[...] }
+    // { success:true, products:[...] }
+
+    state.products = Array.isArray(productResponse.products)
+      ? productResponse.products
+      : Array.isArray(productResponse.data)
+        ? productResponse.data
+        : [];
+
+    state.categories = Array.isArray(categoryResponse.categories)
+      ? categoryResponse.categories
+      : Array.isArray(categoryResponse.data)
+        ? categoryResponse.data
+        : [];
+
+    // Only Active products
+    state.products = state.products.filter(product =>
+      String(product.status || "Active").toLowerCase() === "active"
+    );
+
     fillCategories();
     renderProducts();
-  } catch (err) {
-    $("errorState").textContent = "Unable to load products. " + err.message + " Please check the API setup.";
+
+  } catch (error) {
+
+    console.error("Catalogue loading error:", error);
+
+    $("errorState").textContent =
+      "Unable to load products. " + error.message;
+
     $("errorState").classList.remove("hidden");
-  } finally { $("loadingState").classList.add("hidden"); }
+
+  } finally {
+
+    $("loadingState").classList.add("hidden");
+
+  }
+
 }
+
+
+/* =========================================================
+   CATEGORY DROPDOWN
+========================================================= */
 
 function fillCategories() {
+
   const select = $("categoryFilter");
-  const current = select.value;
+
+  const currentValue = state.category;
+
+  const categories = [
+    ...new Set([
+      ...state.categories.map(item =>
+        typeof item === "string" ? item : item.name
+      ),
+      ...state.products.map(item => item.category)
+    ])
+  ]
+  .filter(Boolean)
+  .sort((a, b) => a.localeCompare(b));
+
   select.innerHTML = '<option value="">All categories</option>';
-  const names = [...new Set([
-    ...state.categories.map(x => x.name),
-    ...state.products.map(x => x.category)
-  ].filter(Boolean))].sort();
-  names.forEach(name => {
+
+  categories.forEach(category => {
+
     const option = document.createElement("option");
-    option.value = name; option.textContent = name; select.appendChild(option);
+
+    option.value = category;
+    option.textContent = category;
+
+    select.appendChild(option);
+
   });
-  select.value = names.includes(current) ? current : "";
+
+  select.value = categories.includes(currentValue) ? currentValue : "";
+
+  if (!select.value) {
+    state.category = "";
+  }
+
 }
+
+
+/* =========================================================
+   RENDER PRODUCT CARDS
+========================================================= */
 
 function renderProducts() {
-  const query = $("searchInput").value.trim().toLowerCase();
-  const category = $("categoryFilter").value;
-  const filtered = state.products.filter(p => {
-    const haystack = [p.name,p.sku,p.category,p.short_description,p.description].join(" ").toLowerCase();
-    return (!query || haystack.includes(query)) && (!category || p.category === category);
+
+  const grid = $("productGrid");
+
+  const search = state.search;
+
+  const filteredProducts = state.products.filter(product => {
+
+    const searchableText = [
+      product.name,
+      product.sku,
+      product.category,
+      product.short_description,
+      product.description,
+      product.specifications
+    ].join(" ").toLowerCase();
+
+    const matchesSearch = searchableText.includes(search);
+
+    const matchesCategory =
+      !state.category || product.category === state.category;
+
+    return matchesSearch && matchesCategory;
+
   });
-  const grid = $("productGrid"); grid.innerHTML = "";
-  $("emptyState").classList.toggle("hidden", filtered.length > 0);
-  filtered.forEach(product => {
-    const card = document.createElement("article"); card.className = "product-card";
-    const image = safeUrl(product.image_url);
+
+  grid.innerHTML = "";
+
+  if (filteredProducts.length === 0) {
+
+    $("emptyState").classList.remove("hidden");
+
+    return;
+
+  }
+
+  $("emptyState").classList.add("hidden");
+
+  filteredProducts.forEach(product => {
+
+    const card = document.createElement("article");
+
+    card.className = "product-card";
+
+    const image = safeImageUrl(product.image_url);
+
     card.innerHTML = `
-      <div class="product-image">${image ? `<img src="${escapeAttr(image)}" alt="${escapeAttr(product.name || "Product")}" loading="lazy" onerror="this.parentElement.innerHTML='<span class=&quot;image-placeholder&quot;>▦</span>'">` : '<span class="image-placeholder">▦</span>'}</div>
+
+      <div class="product-image">
+
+        ${
+          image
+            ? `<img src="${escapeHTML(image)}"
+                    alt="${escapeHTML(product.name)}"
+                    loading="lazy"
+                    onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">`
+            : ""
+        }
+
+        <div class="image-placeholder"
+             style="${image ? "display:none" : "display:flex"}">
+          <span>▦</span>
+        </div>
+
+      </div>
+
       <div class="product-info">
-        <span class="product-category">${escapeHtml(product.category || "General")}</span>
-        <h3>${escapeHtml(product.name || "Unnamed product")}</h3>
-        <p>${escapeHtml(product.short_description || product.description || "Contact us for product details and specifications.")}</p>
-        <div class="product-meta">${product.sku ? "SKU: " + escapeHtml(product.sku) : ""}${product.unit ? " · Unit: " + escapeHtml(product.unit) : ""}</div>
-        <div class="product-actions"><button type="button" data-view="${escapeAttr(product.id)}">View Details</button><button class="add" type="button" data-add="${escapeAttr(product.id)}">+ Add Enquiry</button></div>
-      </div>`;
+
+        <span class="product-category">
+          ${escapeHTML(product.category || "General")}
+        </span>
+
+        <h3>${escapeHTML(product.name)}</h3>
+
+        <p class="product-description">
+          ${escapeHTML(product.short_description || "")}
+        </p>
+
+        <div class="product-sku">
+          SKU: ${escapeHTML(product.sku || "-")}
+        </div>
+
+        <div class="product-actions">
+
+          <button class="btn-outline"
+                  type="button"
+                  data-action="details">
+            View Details
+          </button>
+
+          <button class="btn primary"
+                  type="button"
+                  data-action="add">
+            + Add Enquiry
+          </button>
+
+        </div>
+
+      </div>
+
+    `;
+
+    card.querySelector('[data-action="details"]')
+      .addEventListener("click", () => openProductModal(product));
+
+    card.querySelector('[data-action="add"]')
+      .addEventListener("click", () => addToCart(product));
+
     grid.appendChild(card);
+
   });
-  grid.querySelectorAll("[data-add]").forEach(btn => btn.addEventListener("click", () => addToCart(btn.dataset.add)));
-  grid.querySelectorAll("[data-view]").forEach(btn => btn.addEventListener("click", () => showProduct(btn.dataset.view)));
+
 }
 
-function showProduct(id) {
-  const p = state.products.find(x => String(x.id) === String(id)); if (!p) return;
-  const image = safeUrl(p.image_url);
-  $("modalContent").innerHTML = `<div class="modal-product">
-    ${image ? `<img src="${escapeAttr(image)}" alt="${escapeAttr(p.name)}">` : '<div class="product-image"><span class="image-placeholder">▦</span></div>'}
-    <div><span class="product-category">${escapeHtml(p.category || "General")}</span><h2>${escapeHtml(p.name || "")}</h2>
-    <p>${escapeHtml(p.description || p.short_description || "Contact us for more details.")}</p>
-    ${p.sku ? `<p><b>SKU:</b> ${escapeHtml(p.sku)}</p>` : ""}
-    ${p.specifications ? `<h4>Technical specifications</h4><div class="specs">${escapeHtml(p.specifications)}</div>` : ""}
-    ${safeUrl(p.datasheet_url) ? `<p><a class="text-link" href="${escapeAttr(safeUrl(p.datasheet_url))}" target="_blank" rel="noopener">View datasheet ↗</a></p>` : ""}
-    <button class="btn primary" id="modalAdd">Add to Enquiry</button></div></div>`;
+
+/* =========================================================
+   PRODUCT DETAILS MODAL
+========================================================= */
+
+function openProductModal(product) {
+
+  const image = safeImageUrl(product.image_url);
+
+  const datasheet = safeLinkUrl(product.datasheet_url);
+
+  $("modalContent").innerHTML = `
+
+    <div class="modal-product">
+
+      ${
+        image
+          ? `<img class="modal-product-image"
+                  src="${escapeHTML(image)}"
+                  alt="${escapeHTML(product.name)}"
+                  onerror="this.style.display='none'">`
+          : ""
+      }
+
+      <span class="eyebrow">
+        ${escapeHTML(product.category || "Product")}
+      </span>
+
+      <h2>${escapeHTML(product.name)}</h2>
+
+      <p>${escapeHTML(product.description || product.short_description || "")}</p>
+
+      <div class="modal-specifications">
+
+        <h4>Product Information</h4>
+
+        <p><strong>SKU:</strong> ${escapeHTML(product.sku || "-")}</p>
+
+        <p><strong>Category:</strong> ${escapeHTML(product.category || "-")}</p>
+
+        <p><strong>Unit:</strong> ${escapeHTML(product.unit || "-")}</p>
+
+        <p><strong>Specifications:</strong></p>
+
+        <div class="specification-text">
+          ${escapeHTML(product.specifications || "Specifications not available.")}
+        </div>
+
+      </div>
+
+      ${
+        datasheet
+          ? `<a class="btn-outline datasheet-link"
+                href="${escapeHTML(datasheet)}"
+                target="_blank"
+                rel="noopener noreferrer">
+                View Datasheet
+             </a>`
+          : ""
+      }
+
+      <button class="btn primary full"
+              id="modalAddEnquiry">
+        + Add to Enquiry
+      </button>
+
+    </div>
+
+  `;
+
+  $("modalAddEnquiry").addEventListener("click", () => {
+
+    addToCart(product);
+
+    closeProductModal();
+
+  });
+
   $("productModal").classList.remove("hidden");
-  $("modalAdd").addEventListener("click", () => { addToCart(id); closeProductModal(); openCart(); });
-}
-function closeProductModal(){ $("productModal").classList.add("hidden"); }
 
-function addToCart(id) {
-  const p = state.products.find(x => String(x.id) === String(id)); if (!p) return;
-  const found = state.cart.find(x => String(x.product_id) === String(id));
-  if (found) found.quantity += 1;
-  else state.cart.push({product_id:p.id,product_name:p.name,sku:p.sku || "",unit:p.unit || "",quantity:1});
-  saveCart(); toast("Added to your enquiry list");
 }
-function saveCart(){localStorage.setItem("novaEnquiryCart",JSON.stringify(state.cart));updateCartUI();}
-function updateCartUI(){
-  $("cartCount").textContent = state.cart.reduce((n,x)=>n+Number(x.quantity||0),0);
-  const box=$("cartItems");box.innerHTML="";
-  if(!state.cart.length){box.innerHTML='<p class="muted">Your enquiry list is empty. Add products from the catalogue.</p>';return;}
-  state.cart.forEach((item,index)=>{
-    const row=document.createElement("div");row.className="cart-row";
-    row.innerHTML=`<div><strong>${escapeHtml(item.product_name)}</strong><small>${item.sku ? "SKU: "+escapeHtml(item.sku)+" · " : ""}${escapeHtml(item.unit || "Unit")}</small><button class="remove-item" data-remove="${index}">Remove</button></div>
-      <div class="qty-controls"><button data-dec="${index}">−</button><span>${Number(item.quantity)}</span><button data-inc="${index}">+</button></div>`;
-    box.appendChild(row);
+
+
+function closeProductModal() {
+
+  $("productModal").classList.add("hidden");
+
+}
+
+
+/* =========================================================
+   ADD PRODUCT TO ENQUIRY CART
+========================================================= */
+
+function addToCart(product) {
+
+  const existing = state.cart.find(item =>
+    String(item.product_id) === String(product.id)
+  );
+
+  if (existing) {
+
+    existing.quantity += 1;
+
+  } else {
+
+    state.cart.push({
+
+      product_id: product.id,
+
+      product_name: product.name,
+
+      sku: product.sku || "",
+
+      unit: product.unit || "",
+
+      quantity: 1,
+
+      notes: ""
+
+    });
+
+  }
+
+  saveCart();
+
+  renderCart();
+
+  updateCartCount();
+
+  showToast("Product added to your enquiry list.");
+
+}
+
+
+/* =========================================================
+   SAVE CART
+========================================================= */
+
+function saveCart() {
+
+  localStorage.setItem(
+    "novaEnquiryCart",
+    JSON.stringify(state.cart)
+  );
+
+}
+
+
+/* =========================================================
+   UPDATE CART COUNT
+========================================================= */
+
+function updateCartCount() {
+
+  const count = state.cart.reduce(
+    (total, item) => total + Number(item.quantity || 0),
+    0
+  );
+
+  $("cartCount").textContent = count;
+
+}
+
+
+/* =========================================================
+   RENDER CART ITEMS
+========================================================= */
+
+function renderCart() {
+
+  const container = $("cartItems");
+
+  if (state.cart.length === 0) {
+
+    container.innerHTML = `
+      <p class="muted">Your enquiry list is empty.</p>
+    `;
+
+    updateCartCount();
+
+    return;
+
+  }
+
+  container.innerHTML = state.cart.map((item, index) => `
+
+    <div class="cart-item">
+
+      <div class="cart-item-info">
+
+        <strong>${escapeHTML(item.product_name)}</strong>
+
+        <small>SKU: ${escapeHTML(item.sku || "-")}</small>
+
+      </div>
+
+      <div class="cart-item-controls">
+
+        <button type="button"
+                data-minus="${index}"
+                aria-label="Decrease quantity">−</button>
+
+        <input type="number"
+               min="1"
+               max="999999"
+               value="${Number(item.quantity) || 1}"
+               data-quantity="${index}"
+               aria-label="Quantity">
+
+        <button type="button"
+                data-plus="${index}"
+                aria-label="Increase quantity">+</button>
+
+        <button type="button"
+                class="remove-item"
+                data-remove="${index}">
+          ×
+        </button>
+
+      </div>
+
+    </div>
+
+  `).join("");
+
+  // Quantity minus
+  container.querySelectorAll("[data-minus]").forEach(button => {
+
+    button.addEventListener("click", () => {
+
+      const index = Number(button.dataset.minus);
+
+      state.cart[index].quantity = Math.max(
+        1,
+        Number(state.cart[index].quantity) - 1
+      );
+
+      saveCart();
+      renderCart();
+
+    });
+
   });
-  box.querySelectorAll("[data-remove]").forEach(b=>b.addEventListener("click",()=>{state.cart.splice(Number(b.dataset.remove),1);saveCart();}));
-  box.querySelectorAll("[data-inc]").forEach(b=>b.addEventListener("click",()=>{state.cart[Number(b.dataset.inc)].quantity++;saveCart();}));
-  box.querySelectorAll("[data-dec]").forEach(b=>b.addEventListener("click",()=>{const i=Number(b.dataset.dec);state.cart[i].quantity=Math.max(1,state.cart[i].quantity-1);saveCart();}));
+
+  // Quantity plus
+  container.querySelectorAll("[data-plus]").forEach(button => {
+
+    button.addEventListener("click", () => {
+
+      const index = Number(button.dataset.plus);
+
+      state.cart[index].quantity =
+        Number(state.cart[index].quantity) + 1;
+
+      saveCart();
+      renderCart();
+
+    });
+
+  });
+
+  // Direct quantity input
+  container.querySelectorAll("[data-quantity]").forEach(input => {
+
+    input.addEventListener("change", () => {
+
+      const index = Number(input.dataset.quantity);
+
+      state.cart[index].quantity = Math.min(
+        999999,
+        Math.max(1, Number(input.value) || 1)
+      );
+
+      saveCart();
+      renderCart();
+
+    });
+
+  });
+
+  // Remove item
+  container.querySelectorAll("[data-remove]").forEach(button => {
+
+    button.addEventListener("click", () => {
+
+      const index = Number(button.dataset.remove);
+
+      state.cart.splice(index, 1);
+
+      saveCart();
+      renderCart();
+
+      showToast("Product removed.");
+
+    });
+
+  });
+
+  updateCartCount();
+
 }
-function openCart(){$("enquiryDrawer").classList.add("open");$("drawerBackdrop").classList.add("open");$("mainNav").classList.remove("show");}
-function closeCart(){$("enquiryDrawer").classList.remove("open");$("drawerBackdrop").classList.remove("open");}
+
+
+/* =========================================================
+   OPEN / CLOSE ENQUIRY DRAWER
+========================================================= */
+
+function openCart() {
+
+  $("enquiryDrawer").classList.add("open");
+
+  $("drawerBackdrop").classList.add("show");
+
+  renderCart();
+
+}
+
+
+function closeCart() {
+
+  $("enquiryDrawer").classList.remove("open");
+
+  $("drawerBackdrop").classList.remove("show");
+
+}
+
+
+/* =========================================================
+   SUBMIT ENQUIRY
+========================================================= */
 
 async function submitEnquiry(event) {
+
   event.preventDefault();
-  if (!state.cart.length) { toast("Please add at least one product first"); return; }
-  const form = event.currentTarget, data = new FormData(form);
-  const customer = {name:data.get("name").trim(),company:data.get("company").trim(),email:data.get("email").trim(),phone:data.get("phone").trim(),address:data.get("address").trim()};
-  const message = data.get("message").trim();
-  const button=$("submitEnquiry"), note=$("formMessage");
-  button.disabled=true;button.textContent="Submitting…";note.textContent="Please wait while we submit your enquiry.";
+
+  if (state.cart.length === 0) {
+
+    $("formMessage").textContent =
+      "Please add at least one product to your enquiry list.";
+
+    return;
+
+  }
+
+  const form = event.currentTarget;
+
+  const formData = new FormData(form);
+
+  const customer = {
+
+    name: String(formData.get("name") || "").trim(),
+
+    company: String(formData.get("company") || "").trim(),
+
+    email: String(formData.get("email") || "").trim(),
+
+    phone: String(formData.get("phone") || "").trim(),
+
+    address: String(formData.get("address") || "").trim()
+
+  };
+
+  const message = String(
+    formData.get("message") || ""
+  ).trim();
+
+  if (!customer.name || !customer.email || !customer.phone) {
+
+    $("formMessage").textContent =
+      "Please complete all required contact details.";
+
+    return;
+
+  }
+
+  const button = $("submitEnquiry");
+
+  button.disabled = true;
+
+  button.textContent = "Submitting...";
+
+  $("formMessage").textContent = "";
+
   try {
-    const result=await api("submitEnquiry",{customer,message,items:state.cart});
-    state.cart=[];saveCart();form.reset();
-    note.textContent=`Thank you. Your enquiry number is ${result.enquiry_no || ""}. Our team will contact you.`;
-    toast("Enquiry submitted successfully");
-  } catch(err) { note.textContent="Could not submit: "+err.message; }
-  finally {button.disabled=false;button.textContent="Submit Enquiry";}
+
+    const payload = {
+
+      customer: customer,
+
+      items: state.cart.map(item => ({
+
+        product_id: item.product_id,
+
+        product_name: item.product_name,
+
+        sku: item.sku,
+
+        unit: item.unit,
+
+        quantity: Number(item.quantity),
+
+        notes: item.notes || ""
+
+      })),
+
+      message: message
+
+    };
+
+    const result = await api("submitEnquiry", payload);
+
+    if (result.success === false) {
+      throw new Error(result.message || "Enquiry submission failed.");
+    }
+
+    state.cart = [];
+
+    saveCart();
+
+    renderCart();
+
+    updateCartCount();
+
+    form.reset();
+
+    $("formMessage").textContent =
+      result.message || "Your enquiry has been submitted successfully.";
+
+    showToast("Enquiry submitted successfully!");
+
+    setTimeout(() => {
+
+      closeCart();
+
+      $("formMessage").textContent =
+        "Your enquiry will be recorded in our system.";
+
+    }, 2500);
+
+  } catch (error) {
+
+    console.error("Enquiry submission error:", error);
+
+    $("formMessage").textContent =
+      "Unable to submit enquiry: " + error.message;
+
+  } finally {
+
+    button.disabled = false;
+
+    button.textContent = "Submit Enquiry";
+
+  }
+
 }
 
-function safeUrl(value) {
+
+/* =========================================================
+   SAFE IMAGE URL
+========================================================= */
+
+function safeImageUrl(value) {
+
   if (!value) return "";
-  try { const u = new URL(String(value), window.location.href); return ["https:","http:"].includes(u.protocol) ? u.href : ""; } catch { return ""; }
+
+  try {
+
+    const url = new URL(value);
+
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return "";
+    }
+
+    return url.href;
+
+  } catch (error) {
+
+    return "";
+
+  }
+
 }
-function escapeHtml(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
-function escapeAttr(v){return escapeHtml(v);}
-let toastTimer;
-function toast(message){const el=$("toast");el.textContent=message;el.classList.add("show");clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove("show"),2300);}
+
+
+/* =========================================================
+   SAFE LINK URL
+========================================================= */
+
+function safeLinkUrl(value) {
+
+  if (!value) return "";
+
+  try {
+
+    const url = new URL(value);
+
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      return "";
+    }
+
+    return url.href;
+
+  } catch (error) {
+
+    return "";
+
+  }
+
+}
+
+
+/* =========================================================
+   HTML ESCAPE
+========================================================= */
+
+function escapeHTML(value) {
+
+  return String(value ?? "").replace(/[&<>"']/g, character => ({
+
+    "&": "&amp;",
+
+    "<": "&lt;",
+
+    ">": "&gt;",
+
+    '"': "&quot;",
+
+    "'": "&#39;"
+
+  })[character]);
+
+}
+
+
+/* =========================================================
+   TOAST MESSAGE
+========================================================= */
+
+function showToast(message) {
+
+  const toast = $("toast");
+
+  toast.textContent = message;
+
+  toast.classList.add("show");
+
+  setTimeout(() => {
+
+    toast.classList.remove("show");
+
+  }, 2500);
+
+}
+
+
+/* =========================================================
+   END OF NOVA APP.JS
+========================================================= */
